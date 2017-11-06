@@ -1,0 +1,6 @@
+target
+*.class
+*.log
+stackoverflow.csv
+atussum.csv
+wikipedia.dat
