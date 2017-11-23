@@ -17,16 +17,17 @@ object Visualization {
   }
 
   def idwInterpolation(temperatures: Iterable[(Location, Temperature)], location: Location): Temperature = {
-    val opt = temperatures.find(_._1 == location)
-    opt match {
-      case Some((loc, temp)) => temp
-      // distribute this
-      case None => {
-        val weights: Iterable[Double] = temperatures.map(x => idw(location)(x._1))
-        val temps = temperatures.map(_._2)
-        val product: Iterable[Double] = (temps zip weights).map {case (t,w) => t*w}
-        product.sum/weights.sum
-      }
+    val nearest = temperatures.fold(temperatures.head) { case (x1, x2) =>
+      if (greatCircleMetric(x1._1, location) <= greatCircleMetric(x2._1, location))
+        x1 else x2
+    }
+    val distToNearest = greatCircleMetric(nearest._1, location) * 6371 // radius*sigma = distance
+    if (distToNearest < 1) nearest._2
+    else {
+      val weights: Iterable[Double] = temperatures.map {case (loc, _) => idw(location)(loc)}
+      val temps = temperatures.map(_._2)
+      val product: Iterable[Double] = (temps zip weights).map {case (t,w) => t*w}
+      product.sum/weights.sum
     }
   }
 
@@ -35,9 +36,9 @@ object Visualization {
   
   def idw(x: Location)(y: Location): Double = {
     val d = greatCircleMetric(x,y)
-    if (isZero(d)) throw new ArithmeticException("The distance between two points is zero.")
-    else
-      1/math.pow(d,2)
+    //if (d == 0.0) throw new ArithmeticException("The distance between two points is zero.")
+    //else
+    1/math.pow(d,2)
   }
   
   def degToRadian(x: Double): Double = math.Pi * x/180
@@ -45,8 +46,9 @@ object Visualization {
   def greatCircleMetric(x: Location, y: Location): Double = {
     val Location(lat1, lon1) = x; val Location(lat2, lon2) = y
     (lat1, lon1, lat2, lon2) match {
-      case _ if ((lat1 == lat2)&&(lon1 == lon2)) => 0
-      case _ if ((lat1 == (-1)*lat2)&&(lon1 == (-1)*lon2)) => math.Pi
+      case _ if (x == y) => 0
+      case _ if ((lat1 == (-1)*lat2)&&
+        ((lon1 + 180 == lon2) || (lon1 - 180 == lon2))) => math.Pi
       case _ => {
         //val r = ??? // radius of the sphere doens't matter in weighting
         //val dlat = math.abs(lat1-lat2)
@@ -73,36 +75,17 @@ object Visualization {
     opt match {
       case Some((_, col)) => col
       case None => {
-        val greater = points.filter(_._1 > value)
-        val lesser = points.filter(_._1 < value)
+        val (greater, lesser) = points.partition(_._1 > value)
         if (greater.isEmpty) lesser.maxBy(_._1)._2 
         else if (lesser.isEmpty) greater.minBy(_._1)._2 
         else {
           val upper = greater.minBy(_._1)
           val lower = lesser.maxBy(_._1)
-          addColor(lower._2, divideColor(multiplyColor((value - lower._1), subtractColor(upper._2, lower._2)), (upper._1 - lower._1)))
+          lower._2 + (upper._2 - lower._2) * ((value - lower._1) / (upper._1 - lower._1))
         }
       }
     }
   }
-
-  def addColor(c1: Color, c2: Color): Color = {
-    val Color(r1, g1, b1) = c1
-    val Color(r2, g2, b2) = c2
-    Color(r1+r2, g1+g2, b1+b2)
-  }
-  def subtractColor(c1: Color, c2: Color): Color = {
-    val Color(r1, g1, b1) = c1
-    val Color(r2, g2, b2) = c2
-    Color(r1-r2, g1-g2, b1-b2)
-  }
-  def multiplyColor(x: Double, c: Color): Color = {
-    if (x == 0) throw new ArithmeticException("Don't multiply color by zero.")
-    c match {
-      case Color(r,g,b) => Color(math.round(x*r).toInt, math.round(x*g).toInt, math.round(x*b).toInt)
-    }
-  }
-  def divideColor(c: Color, x: Double): Color = multiplyColor(1/x, c)
 
   /**
     * @param temperatures Known temperatures
@@ -110,6 +93,10 @@ object Visualization {
     * @return A 360×180 image where each pixel shows the predicted temperature at its location
     */
   def visualize(temperatures: Iterable[(Location, Temperature)], colors: Iterable[(Temperature, Color)]): Image = {
+    // temperatures.roundLocation.groupBy(location).avg(temperature)
+    val pixelColors: Iterable[(Temperature, Pixel)] =
+      colors.map {case (temp, Color(r,g,b)) => (temp, Pixel(r,g,b,200))}
+    // val img = Image(w: Int, h: Int, pixels: Array[Pixel])
     ???
   }
 

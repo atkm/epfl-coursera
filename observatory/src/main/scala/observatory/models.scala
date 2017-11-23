@@ -38,5 +38,23 @@ case class CellPoint(x: Double, y: Double)
   * @param green Level of green, 0 ≤ green ≤ 255
   * @param blue Level of blue, 0 ≤ blue ≤ 255
   */
-case class Color(red: Int, green: Int, blue: Int)
+case class Color(red: Int, green: Int, blue: Int) {
+  private def isLegalValue(v: Int): Boolean = (0 <= v) && (v <= 255)
+  def isValid: Boolean = Seq(red, green, blue).forall(isLegalValue)
+
+  def +(that: Color): Color = 
+    new Color(this.red + that.red, this.green + that.green, this.blue + that.blue)
+
+  def -(that: Color): Color = 
+    new Color(this.red - that.red, this.green - that.green, this.blue - that.blue)
+
+  private def round(x: Double): Int = math.round(x).toInt
+  def *(x: Double): Color = 
+    new Color(round(x*red), round(x*green), round(x*blue))
+  
+  def / (x: Double): Color = {
+    require(x != 0, "Can't divide a color by zero.")
+    this * (1/x)
+  }
+}
 
