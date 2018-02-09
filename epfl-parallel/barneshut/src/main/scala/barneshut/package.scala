@@ -3,6 +3,14 @@ import barneshut.conctrees._
 
 package object barneshut {
 
+  private def weightedAverage(points: Seq[Float], mass: Seq[Float]): Float = {
+    val weightedSum = (points zip mass).foldLeft[Float](0)( {
+      case (v,(p,m)) => v + p*m //p._1*p._2
+    } )
+    val totalWeight = mass.sum
+    weightedSum/totalWeight
+  }
+
   class Boundaries {
     var minX = Float.MaxValue
 
@@ -59,11 +67,7 @@ package object barneshut {
     def total: Int = 0
     def insert(b: Body): Quad = {
       // create a leaf with b. What are the parameters to new Leaf?
-      b match {
-        case Body(mass, x, y, _, _) => {
-          Leaf(x, y, this.size, Seq(b))
-        }
-      }
+      Leaf(centerX, centerY, size, Seq(b))
     }
   }
 
@@ -71,41 +75,73 @@ package object barneshut {
     nw: Quad, ne: Quad, sw: Quad, se: Quad
   ) extends Quad {
     // center is the SE corner of nw (equivalently, the NW corner of se, etc.)
-    val centerX: Float = nw.centerX + (nw.size/2)
+    val centerX: Float = nw.centerX + (nw.size/2) // consider (nw.centerX + ne.centerX)/2
     val centerY: Float = nw.centerY + (nw.size/2)
     // assume that the children have the same `size`
     val size: Float = nw.size*2
-    val total: Int = ???
+    val total: Int = nw.total + ne.total + sw.total + se.total
     val mass: Float = nw.mass + ne.mass + sw.mass + se.mass
     val massX: Float = {
-      weightedAverage( List(nw.massX, ne.massX, se.massX, sw.massX),
+      if (mass == 0) centerX
+      else weightedAverage( List(nw.massX, ne.massX, se.massX, sw.massX),
         List(nw.mass, ne.mass, se.mass, sw.mass) )
     }
     val massY: Float = {
-      weightedAverage( List(nw.massY, ne.massY, se.massY, sw.massY),
+      if (mass == 0) centerY
+      else weightedAverage( List(nw.massY, ne.massY, se.massY, sw.massY),
         List(nw.mass, ne.mass, se.mass, sw.mass) )
     }
-    
+
 
     def insert(b: Body): Fork = {
+      // recursively updates the respective child and creates a new Fork
       // how to deal with an insert to a boundary?
-      ???
+      // -> resolve by inserting to N or W
+      b match {
+        case Body(_, x, y, _, _) if (x <= centerX && y <= centerY)
+        => Fork(nw.insert(b), ne, sw, se)
+        case Body(_, x, y, _, _) if (x > centerX && y <= centerY)
+        => Fork(nw, ne.insert(b), sw, se)
+        case Body(_, x, y, _, _) if (x <= centerX && y > centerY)
+        => Fork(nw, ne, sw.insert(b), se)
+        case Body(_, x, y, _, _) if (x > centerX && y > centerY)
+        => Fork(nw, ne, sw, se.insert(b))
+        case _ => throw new RuntimeException("Boundary case encountered in Fork.insert")
+      }
     }
 
-    private def weightedAverage(points: List[Float], mass: List[Float]): Float = {
-      val weightedSum = (points zip mass).foldLeft[Float](0)( {
-        case (v,(p,m)) => v + p*m //p._1*p._2
-      } )
-      val totalWeight = mass.sum
-      weightedSum/totalWeight
-    }
+
   }
 
   case class Leaf(centerX: Float, centerY: Float, size: Float, bodies: Seq[Body])
   extends Quad {
-    val (mass, massX, massY) = (??? : Float, ??? : Float, ??? : Float)
-    val total: Int = ???
-    def insert(b: Body): Quad = ???
+    val mass : Float = bodies.foldLeft[Float](0)( {
+      case (m0, Body(m, _, _, _, _)) => m0 + m
+    })
+    val massX : Float = weightedAverage( (bodies map {_.x} ), (bodies map {_.mass} ) )
+    val massY : Float = weightedAverage( (bodies map {_.y} ), (bodies map {_.mass} ) )
+    val total: Int = bodies.size
+    /* If the size of Leaf is greater than minimumSize, create a Fork with empty children,
+     * and add all the bodies into the Fork. Otherwise, create another Leaf with
+     * all the existing bodies and the new one.
+     */
+    def insert(b: Body): Quad = {
+      // TODO: minimumSize inequality strict?
+      if (size > minimumSize) {
+        def helper(f: Fork, bodies: Seq[Body]): Fork = bodies match {
+          case Seq() => f
+          case b +: tail => helper(f.insert(b), tail)
+        }
+        val quarterSize = size/4
+        val nw = new Empty(centerX - quarterSize, centerY - quarterSize, size/2)
+        val ne = new Empty(centerX + quarterSize, centerY - quarterSize, size/2)
+        val sw = new Empty(centerX - quarterSize, centerY + quarterSize, size/2)
+        val se = new Empty(centerX + quarterSize, centerY + quarterSize, size/2)
+        val newFork = helper(Fork(nw,ne,sw,se), bodies)
+        newFork.insert(b)
+      }
+      else new Leaf(centerX, centerY, size, b +: bodies)
+    }
   }
 
   def minimumSize = 0.00001f
@@ -154,13 +190,18 @@ package object barneshut {
       }
 
       def traverse(quad: Quad): Unit = (quad: Quad) match {
-        case Empty(_, _, _) =>
-          // no force
+        case Empty(_, _, _) => // no force; nothing happens
         case Leaf(_, _, _, bodies) =>
           // add force contribution of each body by calling addForce
-        case Fork(nw, ne, sw, se) =>
+          bodies foreach { b => addForce(b.mass, b.x, b.y) }
+        case Fork(nw, ne, sw, se) => {
           // see if node is far enough from the body,
           // or recursion is needed
+          // farEnough == quad.size / dist < theta
+          if (quad.size / distance(quad.massX, quad.massY, x, y) < theta)
+              addForce(quad.mass, quad.massX, quad.massY)
+          else Seq(nw, ne, sw, se) foreach traverse
+        }
       }
 
       traverse(quad)
@@ -177,20 +218,32 @@ package object barneshut {
 
   val SECTOR_PRECISION = 8
 
+  /* Partition the spacial elements into disjoint sets; then, link the sets.
+   * @param sectorPrecision denotes the width and height of matrix
+   * @param boundaries
+   */
   class SectorMatrix(val boundaries: Boundaries, val sectorPrecision: Int) {
     val sectorSize = boundaries.size / sectorPrecision
     val matrix = new Array[ConcBuffer[Body]](sectorPrecision * sectorPrecision)
     for (i <- 0 until matrix.length) matrix(i) = new ConcBuffer
 
+    // An area defined by `boundaries` is divided into n=sectorPrecision^2 pieces.
+    // We refer to each piece as a sector. A sector is a ConcBuffer[Body].
+    // Determine which sector Body b goes into, and append b to the ConcBuffer.
     def +=(b: Body): SectorMatrix = {
-      ???
+      // TODO: ensure 0 <= index < sectorPrecision
+      this( ((b.x - boundaries.minX)/sectorSize).toInt,
+        ((b.y - boundaries.minY)/sectorSize).toInt ) += b
       this
     }
 
     def apply(x: Int, y: Int) = matrix(y * sectorPrecision + x)
 
+    /* @param that a SectorMatrix of the same dimension.
+     */
     def combine(that: SectorMatrix): SectorMatrix = {
-      ???
+      for (i <- 0 until matrix.length) matrix.update(i,  matrix(i).combine(that.matrix(i)) )
+      this
     }
 
     def toQuad(parallelism: Int): Quad = {
@@ -212,13 +265,13 @@ package object barneshut {
               quad(x + nspan, y, nspan, nAchievedParallelism),
               quad(x, y + nspan, nspan, nAchievedParallelism),
               quad(x + nspan, y + nspan, nspan, nAchievedParallelism)
-            ) else (
-              quad(x, y, nspan, nAchievedParallelism),
-              quad(x + nspan, y, nspan, nAchievedParallelism),
-              quad(x, y + nspan, nspan, nAchievedParallelism),
-              quad(x + nspan, y + nspan, nspan, nAchievedParallelism)
-            )
-          Fork(nw, ne, sw, se)
+              ) else (
+                quad(x, y, nspan, nAchievedParallelism),
+                quad(x + nspan, y, nspan, nAchievedParallelism),
+                quad(x, y + nspan, nspan, nAchievedParallelism),
+                quad(x + nspan, y + nspan, nspan, nAchievedParallelism)
+              )
+              Fork(nw, ne, sw, se)
         }
       }
 

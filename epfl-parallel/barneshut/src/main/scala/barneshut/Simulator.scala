@@ -11,24 +11,41 @@ import common._
 
 class Simulator(val taskSupport: TaskSupport, val timeStats: TimeStatistics) {
 
+  // modify an existing boundaries
   def updateBoundaries(boundaries: Boundaries, body: Body): Boundaries = {
-    ???
+    boundaries.maxX = body.x max boundaries.maxX
+    boundaries.minX = body.x min boundaries.minX
+    boundaries.maxY = body.y max boundaries.maxY
+    boundaries.minY = body.y min boundaries.minY
+    boundaries
   }
 
+  // create a new boundaries that merge existing two
   def mergeBoundaries(a: Boundaries, b: Boundaries): Boundaries = {
-    ???
+    val newBoundaries = new Boundaries
+    newBoundaries.maxX = a.maxX max b.maxX
+    newBoundaries.minX = a.minX min b.minX
+    newBoundaries.maxY = a.maxY max b.maxY
+    newBoundaries.minY = a.minY min b.minY
+    newBoundaries
   }
 
   def computeBoundaries(bodies: Seq[Body]): Boundaries = timeStats.timed("boundaries") {
     val parBodies = bodies.par
     parBodies.tasksupport = taskSupport
+    // seqop  = updateBoundaries: (Boundaries, Body) -> Boundaries
+    // combop = mergeBoundaries
     parBodies.aggregate(new Boundaries)(updateBoundaries, mergeBoundaries)
   }
 
   def computeSectorMatrix(bodies: Seq[Body], boundaries: Boundaries): SectorMatrix = timeStats.timed("matrix") {
     val parBodies = bodies.par
     parBodies.tasksupport = taskSupport
-    ???
+    parBodies.aggregate(new SectorMatrix(boundaries, SECTOR_PRECISION))(
+    { case (sectorMatrix, body) => sectorMatrix += body},
+    { case (sectorMatrixLeft, sectorMatrixRight) =>
+    sectorMatrixLeft combine sectorMatrixLeft }
+    )
   }
 
   def computeQuad(sectorMatrix: SectorMatrix): Quad = timeStats.timed("quad") {
@@ -38,9 +55,10 @@ class Simulator(val taskSupport: TaskSupport, val timeStats: TimeStatistics) {
   def updateBodies(bodies: Seq[Body], quad: Quad): Seq[Body] = timeStats.timed("update") {
     val parBodies = bodies.par
     parBodies.tasksupport = taskSupport
-    ???
+    parBodies.map(_ updated quad).seq
   }
 
+  // Delete bodies that are far away from other bodies.
   def eliminateOutliers(bodies: Seq[Body], sectorMatrix: SectorMatrix, quad: Quad): Seq[Body] = timeStats.timed("eliminate") {
     def isOutlier(b: Body): Boolean = {
       val dx = quad.massX - b.x
